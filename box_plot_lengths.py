@@ -1,51 +1,90 @@
 from sc.fiji.snt.io import MouseLightLoader, MouseLightQuerier
-from sc.fiji.snt.analysis import GroupedTreeStatistics, SNTChart
+from sc.fiji.snt.analysis import GroupedTreeStatistics, MultiTreeStatistics, SNTChart
 from sc.fiji.snt.annotation import AllenCompartment, AllenUtils
-import random
+
 
 # To run this script:
 # 1. Download Fiji
 # 2. Subscribe to the Neuronanatomy update site
-# 3. Run it from within Fiji's script editor (File>New>Script...) & choose Python as language
-#  Resources: 
-#     Documentation: https://imagej.net/plugins/snt/
-#     API:           https//javadoc.scijava.org/SNT/
+# 3. Run it from within Fiji's script editor (File -> New : Script..., by choosing Python as language
+#  Resources:
+#     Documentation:....https://imagej.net/plugins/snt/
+#     API:................https//javadoc.scijava.org/SNT/
 
-
-def get_box_plot(arbor_type, metric):
-    area_labels = ['CTX', 'HY', 'HPF'] # cortex, hypothalamus hippocampal formation
+def get_cells(area_labels):
     dict = {}
+    histograms = []
     for label in area_labels:
+
         # Get all neuron IDs associated with this brain area
         compartment = AllenUtils.getCompartment(label)
         all_ids = MouseLightQuerier.getIDs(compartment)
-        # For simplicity, do not retrieve more than 100 neurons
-        n = min(len(all_ids), 100)
-        sampled_ids = random.sample(all_ids, n)
-        trees = []
-        for id in sampled_ids:
-            # Retrieve the actual reconstruction and add it to the lis
-            trees.append(MouseLightLoader(id).getTree(arbor_type))
-        dict[label] = trees
-        
+        axons = []
+        dendrites = []
+        for id in all_ids:
+
+            # Retrieve the actual reconstructions. Add them to holding dictionary
+            loader = MouseLightLoader(id)
+            axons.append(loader.getTree('axon'))
+            dendrites.append(loader.getTree('dendrite'))
+        dict[label] = (axons, dendrites)
+    return dict
+
+
+def get_histograms(dict, metric, arbor_type='axon'):
+    index = (0 if arbor_type == 'axon' else 1)
+    histograms = []
+    for (label, axon_dendrites) in dict.items():
+
+        # For each group, assemble a MultiTreeStatistics instance to retrieve
+        # frequencies, and respective histogram
+        stats = MultiTreeStatistics(axon_dendrites[index])
+        hist = stats.getHistogram(metric)
+        hist.setChartTitle(label)
+        histograms.append(hist)
+    return histograms
+
+
+def get_box_plot(dict, metric, arbor_type='axon'):
+    index = (0 if arbor_type == 'axon' else 1)
+
     # Assemble a GroupedTreeStatistics to established comparisons
     group_stats = GroupedTreeStatistics()
-    for label, trees in dict.items():
-        # Ad comparison group
-        group_stats.addGroup(trees, label)
+    for (label, axon_dendrites) in dict.items():
 
+        # Ad comparison group
+        group_stats.addGroup(axon_dendrites[index], label)
     return group_stats.getBoxPlot(metric)
 
 
+def main(area_labels, metric):
+    cells_dict = get_cells(area_labels)
+    for subarbor in ['axon', 'dendrites']:
+
+        # Get histograms
+        histograms = get_histograms(cells_dict, metric, subarbor)
+        comb_hist = SNTChart.combine(histograms, 1, len(area_labels), True)
+        comb_hist.setTitle(subarbor)
+        comb_hist.show()
+
+       # Get box plots
+        boxplot = get_box_plot(cells_dict, metric, subarbor)
+        boxplot.setTitle(subarbor)
+        boxplot.show()
+ 
+    for (label, axon_dendrites) in cells_dict.items():
+        print '{}: Axons N={}; Dendrites N={}'.format(label,
+                len(axon_dendrites[0]), len(axon_dendrites[1]))
+
+
 if MouseLightQuerier.isDatabaseAvailable():
-    # This is probably not very efficiency, as we'll be querying the
-    # database multiple times to retrieve the same data, but given
-    # the limited no. of cells it should only take a while to render
-    # all the plot
-    plot1 = get_box_plot('axon', 'Cable length')
-    plot1.setChartTitle("Axons")
-    plot2 = get_box_plot('dendrite', 'Cable length')
-    plot2.setChartTitle("Dendrites")
-    SNTChart.combine([plot1, plot2], True).show()
+
+    area_labels = ['CTX', 'HY', 'HPF']  # cortex, hypothalamus, hippocampal formation
+    metric = 'Cable length' # case-sensitive
+ 
+    # This may take a while, depending on the no. of cells involved
+    main(area_labels, metric)
+
 else:
-    print("Aborting: Can only proceed with successful connection to database")
+
+    print 'Aborting: Can only proceed with successful connection to database'
